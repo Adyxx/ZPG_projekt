@@ -1,0 +1,109 @@
+#version 400 core
+
+struct Material {
+    vec3 ambient;
+    vec3 diffuse;
+    vec3 specular;
+    float shininess;
+};
+
+struct Light {
+    int type;           
+    vec3 position;
+    vec3 direction;
+    vec3 color;
+    float intensity;
+
+    float constant;
+    float linear;
+    float quadratic;
+
+    float innerCutoff;
+    float outerCutoff;
+};
+
+uniform sampler2D textureDiffuse; 
+in vec2 texCoords;  
+
+uniform int numLights;    
+uniform Light lights[10];  
+uniform vec3 viewPos;   
+uniform Material material;
+
+uniform vec3 flashlightPos;
+uniform vec3 flashlightDir;
+uniform float flashlightInnerCutoff;
+uniform float flashlightOuterCutoff;
+uniform vec3 flashlightColor;
+uniform float flashlightIntensity;
+
+in vec3 fragPos;    
+in vec3 fragNormal;     
+
+out vec4 FragColor;  
+
+void main() {
+    vec3 ambient = material.ambient;
+    vec3 result = ambient;
+
+    vec3 viewDir = normalize(viewPos - fragPos); 
+
+    for (int i = 0; i < numLights; ++i) {
+        vec3 lightDir;
+        float attenuation = 1.0;
+
+        if (lights[i].type == 0) { 
+            lightDir = normalize(lights[i].position - fragPos);
+            float distance = length(lights[i].position - fragPos);
+            attenuation = 1.0 / (lights[i].constant + lights[i].linear * distance + lights[i].quadratic * (distance * distance));
+        } else if (lights[i].type == 1) { 
+            lightDir = normalize(-lights[i].direction);
+        } else if (lights[i].type == 2) { 
+            lightDir = normalize(lights[i].position - fragPos);
+            float distance = length(lights[i].position - fragPos);
+            attenuation = 1.0 / (lights[i].constant + lights[i].linear * distance + lights[i].quadratic * (distance * distance));
+
+            float theta = dot(lightDir, normalize(-lights[i].direction));
+            float epsilon = lights[i].innerCutoff - lights[i].outerCutoff;
+            float intensity = clamp((theta - lights[i].outerCutoff) / epsilon, 0.0, 1.0);
+            attenuation *= intensity;
+        }
+
+        vec3 N = normalize(fragNormal);
+        float diff = max(dot(N, lightDir), 0.0);
+        vec3 diffuse = material.diffuse * diff * lights[i].color * lights[i].intensity;
+
+        vec3 reflectDir = reflect(-lightDir, N);
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+        vec3 specular = material.specular * spec * lights[i].color * lights[i].intensity;
+
+        diffuse *= attenuation;
+        specular *= attenuation;
+
+        result += diffuse + specular;
+    }
+
+    vec3 flashDir = normalize(flashlightDir);
+    vec3 flashLightDir = normalize(flashlightPos - fragPos);
+    float theta = dot(flashLightDir, -flashDir);
+    float epsilon = flashlightInnerCutoff - flashlightOuterCutoff;
+    float flashIntensity = clamp((theta - flashlightOuterCutoff) / epsilon, 0.0, 1.0);
+
+    float flashDistance = length(flashlightPos - fragPos);
+    float flashAttenuation = 1.0 / (1.0 + 0.09 * flashDistance + 0.032 * (flashDistance * flashDistance)) * flashIntensity;
+
+    vec3 flashN = normalize(fragNormal);
+    float flashDiff = max(dot(flashN, flashLightDir), 0.0);
+    vec3 flashDiffuse = flashlightIntensity * flashDiff * flashlightColor * flashAttenuation;
+
+    vec3 flashReflectDir = reflect(-flashLightDir, flashN);
+    float flashSpec = pow(max(dot(viewDir, flashReflectDir), 0.0), material.shininess);
+    vec3 flashSpecular = flashlightIntensity * flashSpec * flashlightColor * flashAttenuation;
+
+    result += flashDiffuse + flashSpecular;
+
+    vec4 texColor = texture(textureDiffuse, texCoords);
+    result *= texColor.rgb;
+
+    FragColor = vec4(result, texColor.a);
+}
